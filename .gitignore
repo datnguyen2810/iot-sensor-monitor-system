@@ -60,3 +60,8 @@ BACKEND_PLAN.md
 AGENTS.md
 CLAUDE.md
 docs/STATUS.md
+
+# Local documentation and ERD
+/docs/
+/erd-db.png
+/erd-db.jpg
