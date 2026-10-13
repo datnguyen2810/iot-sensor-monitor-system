@@ -1,9 +1,9 @@
 package com.iot.backend;
 
 import com.iot.backend.dto.mqtt.SensorMeasurementPayload;
-import com.iot.backend.service.DeviceCommandTransactions;
+import com.iot.backend.service.HistoryService;
 import com.iot.backend.service.MqttService;
-import com.iot.backend.service.SensorMeasurementService;
+import com.iot.backend.service.SensorService;
 import org.eclipse.paho.client.mqttv3.*;
 import org.eclipse.paho.client.mqttv3.persist.MemoryPersistence;
 import org.junit.jupiter.api.Test;
@@ -31,11 +31,11 @@ class MqttBrokerTests {
         var firstAttempt = new CountDownLatch(1);
         var lost = new CountDownLatch(1);
         var received = new LinkedBlockingQueue<SensorMeasurementPayload>();
-        var persistence = mock(SensorMeasurementService.class);
+        var persistence = mock(SensorService.class);
         doAnswer(invocation -> {
             received.add(invocation.getArgument(0));
             return null;
-        }).when(persistence).persist(any());
+        }).when(persistence).saveMeasurement(any());
         var options = new MqttConnectOptions();
         options.setConnectionTimeout(1);
         options.setKeepAliveInterval(2);
@@ -53,7 +53,7 @@ class MqttBrokerTests {
             return result;
         }).when(client).subscribe(any(String[].class), any(int[].class));
         var mqtt = spy(new MqttService(client, options, JsonMapper.builder().build(), persistence,
-                mock(DeviceCommandTransactions.class), executor));
+                mock(HistoryService.class), executor));
         doAnswer(invocation -> {
             invocation.callRealMethod();
             lost.countDown();

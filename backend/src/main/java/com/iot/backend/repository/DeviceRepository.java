@@ -16,6 +16,8 @@ public interface DeviceRepository extends JpaRepository<Device, Integer> {
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT d FROM Device d WHERE d.code = :code")
     Optional<Device> findByCodeForUpdate(@Param("code") String code);
+
     Optional<Device> findByCode(String code);
+
     boolean existsByCode(String code);
 }

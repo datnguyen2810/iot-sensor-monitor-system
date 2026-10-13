@@ -1,89 +1,62 @@
-/**
- * Logic trang Giám sát thông số cảm biến & Điều khiển thiết bị
- */
-
-// Đảm bảo người dùng đã đăng nhập
-if (typeof Auth !== 'undefined') {
-  Auth.requireAuth();
-}
-
+/** Chỉ hiển thị dữ liệu backend; trạng thái thiết bị cập nhật từ backend/ACK. */
+const dashboardAuthenticated = Auth.requireAuth();
 let sensorChart = null;
 let lastChartTimestamp = null;
 let pollingTimer = null;
-
-// Dữ liệu hiển thị cố định khi chưa kết nối được Backend.
-// Khi Backend trả dữ liệu hợp lệ, các giá trị này sẽ được thay thế tự động.
-const DEFAULT_SENSOR_DATA = {
-  temperature: 35.6,
-  humidity: 55,
-  light: 534
-};
-
-const DEFAULT_CHART_DATA = [
-  { time: '17:15:00', temperature: 35.0, humidity: 55, light: 510 },
-  { time: '17:16:00', temperature: 35.2, humidity: 54, light: 515 },
-  { time: '17:17:00', temperature: 35.4, humidity: 55, light: 520 },
-  { time: '17:18:00', temperature: 35.5, humidity: 56, light: 518 },
-  { time: '17:19:00', temperature: 35.6, humidity: 55, light: 512 },
-  { time: '17:20:00', temperature: 35.5, humidity: 55, light: 505 },
-  { time: '17:21:00', temperature: 35.4, humidity: 56, light: 498 },
-  { time: '17:22:00', temperature: 35.3, humidity: 57, light: 490 },
-  { time: '17:23:00', temperature: 35.4, humidity: 56, light: 495 },
-  { time: '17:24:00', temperature: 35.5, humidity: 55, light: 508 },
-  { time: '17:25:00', temperature: 35.6, humidity: 55, light: 520 },
-  { time: '17:26:00', temperature: 35.7, humidity: 54, light: 528 },
-  { time: '17:27:00', ...DEFAULT_SENSOR_DATA }
-];
-
+let pollingBusy = false;
+let dashboardStopped = false;
+let deviceApiReady = false;
+const confirmedStates = { led: 'UNKNOWN', fan: 'UNKNOWN', ac: 'UNKNOWN' };
+const pendingCommands = new Map();
 const DEVICE_NAMES = {
   led: 'Đèn LED',
   fan: 'Quạt',
   ac: 'Điều hoà'
 };
 
-/**
- * Đồng bộ hiệu ứng visual (viền neon, animation icon, badge) theo trạng thái ON/OFF
- * @param {string} device  - tên thiết bị: 'led' | 'fan' | 'ac'
- * @param {boolean} isOn   - true nếu đang BẬT
- */
-function updateDeviceVisual(device, isOn) {
-  const card = document.getElementById(`card-${device}`);
-  const badge = document.getElementById(`status-${device}`);
-  if (!card) return;
 
-  const activeClass = `active-${device}`;
+function chartLabel(item) {
+  if (!item.timestamp) return item.time || '';
+  return new Date(item.timestamp).toLocaleTimeString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh', hour12: false });
+}
 
-  if (isOn) {
-    card.classList.add(activeClass);
-    if (badge) {
-      badge.textContent = 'Đang bật';
-      badge.classList.add('on');
-    }
-  } else {
-    card.classList.remove(activeClass);
-    if (badge) {
-      badge.textContent = 'Đã tắt';
-      badge.classList.remove('on');
-    }
+function updateSensorCards(temp, light, humidity) {
+  for (const [id, value, digits] of [['tempValue', temp, 1], ['lightValue', light, 0], ['humidityValue', humidity, 0]]) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = value == null ? '--' : Number(value).toFixed(digits);
   }
 }
 
-/**
- * Khởi tạo biểu đồ Chart.js với 3 đường cảm biến
- * @param {Array<{time: string, temperature: number, humidity: number, light: number}>} chartData 
- */
+function updateDeviceVisual(device, state = confirmedStates[device]) {
+  const input = document.getElementById('switch-' + device);
+  const card = document.getElementById('card-' + device);
+  const badge = document.getElementById('status-' + device);
+  const pending = pendingCommands.has(device);
+  if (input) {
+    input.checked = state === 'ON';
+    input.disabled = !deviceApiReady || pending;
+    input.closest('.switch-control')?.classList.toggle('loading', pending);
+  }
+  card?.classList.toggle('active-' + device, state === 'ON');
+  if (badge) {
+    const label = state === 'ON' ? 'Đang bật' : state === 'OFF' ? 'Đã tắt' : 'Chưa xác nhận';
+    badge.textContent = pending ? (pendingCommands.get(device).unverified ? 'Chưa xác minh ACK — ' : 'Đang chờ ACK — ') + label : deviceApiReady ? label : 'Không kết nối — ' + label;
+    badge.classList.toggle('on', state === 'ON');
+  }
+}
+
 function initChart(chartData = []) {
   const ctx = document.getElementById('sensorChart');
-  if (!ctx) return;
+  if (!ctx || typeof Chart === 'undefined') return;
 
-  const labels = chartData.map(item => item.time || '');
-  const tempData = chartData.map(item => item.temperature || 0);
-  const humidityData = chartData.map(item => item.humidity || 0);
-  const lightData = chartData.map(item => item.light || 0);
+  const labels = chartData.map(item => chartLabel(item));
+  const tempData = chartData.map(item => item.temperature ?? null);
+  const humidityData = chartData.map(item => item.humidity ?? null);
+  const lightData = chartData.map(item => item.light ?? null);
 
   // Lưu lại mốc thời gian điểm cuối cùng
   if (chartData.length > 0) {
-    lastChartTimestamp = chartData[chartData.length - 1].time;
+    lastChartTimestamp = chartData[chartData.length - 1].timestamp || null;
   }
 
   sensorChart = new Chart(ctx, {
@@ -181,213 +154,140 @@ function initChart(chartData = []) {
   });
 }
 
-/**
- * Tải trạng thái ban đầu của 3 thiết bị
- */
+
+function replaceChart(points) {
+  // Thay toàn bộ dataset, không trùng timestamp.
+  const rows = [...new Map(points.map(item => [item.timestamp || item.time, item])).values()].slice(-15);
+  lastChartTimestamp = rows.at(-1)?.timestamp || null;
+  if (!sensorChart) {
+    initChart(rows); return; 
+  }
+  sensorChart.data.labels = rows.map(chartLabel);
+  ['temperature', 'humidity', 'light'].forEach((key, index) => {
+    sensorChart.data.datasets[index].data = rows.map(item => item[key] ?? null);
+  });
+  sensorChart.update('none');
+}
+
+async function pollSensors() {
+  try {
+    const [chart, latest] = await Promise.all([
+      apiRequest('/api/sensors/chart', { silent: true }),
+      apiRequest('/api/sensors/latest', { silent: true })
+    ]);
+    if (!Array.isArray(chart)) throw new Error('Dữ liệu chart không hợp lệ');
+    replaceChart(chart);
+    updateSensorCards(latest?.temperature, latest?.light, latest?.humidity);
+  } catch (error) {
+    replaceChart([]);
+    updateSensorCards(null, null, null);
+  }
+}
+
 async function loadDeviceStatuses() {
   try {
-    const devices = await apiRequest('/api/devices/status', { silent: true });
-    if (Array.isArray(devices)) {
-      devices.forEach(item => {
-        const switchElem = document.querySelector(`input[data-device="${item.device}"]`);
-        if (switchElem) {
-          const isOn = (item.status === 'ON');
-          switchElem.checked = isOn;
-          updateDeviceVisual(item.device, isOn);
-        }
-      });
-      return;
+    const rows = await apiRequest('/api/devices/status', { silent: true });
+    if (!Array.isArray(rows)) throw new Error('Trạng thái thiết bị không hợp lệ');
+    deviceApiReady = true;
+    for (const code of Object.keys(DEVICE_NAMES)) {
+      const state = rows.find(item => item.device === code)?.status;
+      confirmedStates[code] = ['ON', 'OFF'].includes(state) ? state : 'UNKNOWN';
     }
-  } catch (error) {
-    console.warn('Backend offline, khôi phục trạng thái thiết bị mô phỏng:', error.message);
+  } catch (_) {
+    deviceApiReady = false;
+    Object.keys(DEVICE_NAMES).forEach(code => { confirmedStates[code] = 'UNKNOWN'; });
   }
-
-  // Khôi phục trạng thái đã test từ sessionStorage nếu Backend chưa kết nối
-  ['led', 'fan', 'ac'].forEach(device => {
-    const savedStatus = sessionStorage.getItem(`mock_device_${device}`);
-    const isOn = (savedStatus === 'ON');
-    const switchElem = document.querySelector(`input[data-device="${device}"]`);
-    if (switchElem) {
-      switchElem.checked = isOn;
-      updateDeviceVisual(device, isOn);
-    }
-  });
+  Object.keys(DEVICE_NAMES).forEach(code => updateDeviceVisual(code));
 }
 
-/**
- * Tải 15 bản ghi dữ liệu cảm biến ban đầu cho biểu đồ
- */
-async function loadInitialChartData() {
+async function checkPendingCommands() {
+  for (const [device, receipt] of pendingCommands) {
+    if (!receipt.command_id) continue;
+    try {
+      const params = new URLSearchParams({ device: DEVICE_NAMES[device], limit: '100', sort: 'desc' });
+      const history = await apiRequest('/api/devices/history?' + params, { silent: true });
+      const command = history?.data?.find(row => row.command_id === receipt.command_id);
+      receipt.unverified = !command;
+      if (!command || command.command_status === 'pending') { updateDeviceVisual(device); continue; }
+      if (!['success', 'failed'].includes(command.command_status)) continue;
+      pendingCommands.delete(device);
+      // Chỉ GET status xác định trạng thái cuối; không suy ra từ yêu cầu gửi.
+      await loadDeviceStatuses();
+      showToast(command.command_status === 'success' ? DEVICE_NAMES[device] + ': đã nhận ACK thành công' :
+        DEVICE_NAMES[device] + ': lệnh thất bại/timeout, xem lịch sử', command.command_status === 'success' ? 'success' : 'error');
+    } catch (_) {
+      receipt.unverified = true;
+      // Không giả failed khi mất mạng: giữ khóa/pending và thử lại trong chu kỳ tiếp.
+    }
+    updateDeviceVisual(device);
+  }
+}
+
+async function restorePendingCommands() {
+  // Khôi phục lệnh đang chờ sau reload, kể cả lệnh được gửi từ một phiên khác.
   try {
-    const chartData = await apiRequest('/api/sensors/chart', { silent: true });
-    if (Array.isArray(chartData) && chartData.length > 0) {
-      initChart(chartData);
-      
-      // Đồng thời cập nhật luôn 3 Card số liệu từ điểm gần nhất
-      const latestPoint = chartData[chartData.length - 1];
-      updateSensorCards(latestPoint.temperature, latestPoint.light, latestPoint.humidity);
-    } else {
-      // Giữ dữ liệu cố định nếu Backend chưa có bản ghi cảm biến.
-      initChart(DEFAULT_CHART_DATA);
-      updateSensorCards(
-        DEFAULT_SENSOR_DATA.temperature,
-        DEFAULT_SENSOR_DATA.light,
-        DEFAULT_SENSOR_DATA.humidity
-      );
+    const page = await apiRequest('/api/devices/history?command_status=pending&limit=100', { silent: true });
+    if (!Array.isArray(page?.data)) return;
+    for (const row of page.data) {
+      const device = Object.keys(DEVICE_NAMES).find(code => DEVICE_NAMES[code] === row.device_name);
+      if (device && !pendingCommands.has(device)) pendingCommands.set(device, { command_id: row.command_id });
     }
-  } catch (error) {
-    console.warn('Backend offline, giữ dữ liệu mặc định trên Dashboard:', error.message);
-    initChart(DEFAULT_CHART_DATA);
-    updateSensorCards(
-      DEFAULT_SENSOR_DATA.temperature,
-      DEFAULT_SENSOR_DATA.light,
-      DEFAULT_SENSOR_DATA.humidity
-    );
-  }
+    Object.keys(DEVICE_NAMES).forEach(device => updateDeviceVisual(device));
+  } catch (_) { /* Không suy đoán không có pending khi API lỗi. */ }
 }
 
-/**
- * Cập nhật số liệu hiển thị trên 3 Card cảm biến
- */
-function updateSensorCards(temp, light, humidity) {
-  const tempEl = document.getElementById('tempValue');
-  const lightEl = document.getElementById('lightValue');
-  const humidityEl = document.getElementById('humidityValue');
-
-  if (tempEl && temp !== undefined && temp !== null) {
-    tempEl.textContent = Number(temp).toFixed(1);
-  }
-  if (lightEl && light !== undefined && light !== null) {
-    lightEl.textContent = Math.round(light);
-  }
-  if (humidityEl && humidity !== undefined && humidity !== null) {
-    humidityEl.textContent = Math.round(humidity);
-  }
-}
-
-/**
- * Polling định kỳ mỗi 2 giây gọi GET /api/sensors/latest
- */
-async function pollLatestSensorData() {
+async function pollDashboard() {
+  if (pollingBusy || dashboardStopped || !dashboardAuthenticated) return;
+  if (!localStorage.getItem(API_CONFIG.TOKEN_KEY)) return;
+  pollingBusy = true;
   try {
-    const data = await apiRequest('/api/sensors/latest');
-    if (!data) return;
-
-    // Cập nhật giá trị vào 3 Card
-    updateSensorCards(data.temperature, data.light, data.humidity);
-
-    // Tối ưu trượt biểu đồ: kiểm tra timestamp khác biệt
-    const recordTime = data.timestamp || '';
-    if (recordTime && recordTime !== lastChartTimestamp && sensorChart) {
-      lastChartTimestamp = recordTime;
-
-      // Định dạng mốc giờ hiển thị trên trục hoành (lấy HH:mm:ss nếu có)
-      const displayLabel = recordTime.includes(' ') ? recordTime.split(' ')[1] : recordTime;
-
-      // Push điểm mới vào cuối
-      sensorChart.data.labels.push(displayLabel);
-      sensorChart.data.datasets[0].data.push(Number(data.temperature) || 0);
-      sensorChart.data.datasets[1].data.push(Number(data.humidity) || 0);
-      sensorChart.data.datasets[2].data.push(Number(data.light) || 0);
-
-      // Nếu biểu đồ vượt quá 15 điểm, loại bỏ điểm đầu tiên
-      if (sensorChart.data.labels.length > 15) {
-        sensorChart.data.labels.shift();
-        sensorChart.data.datasets.forEach(ds => ds.data.shift());
-      }
-
-      // Cập nhật không có animation giật
-      sensorChart.update('none');
-    }
-  } catch (error) {
-    // Backend chưa sẵn sàng: giữ nguyên dữ liệu mặc định, không tự sinh số giả.
-    console.debug('Polling latest data:', error.message);
+    await Promise.all([pollSensors(), loadDeviceStatuses()]);
+    await restorePendingCommands();
+    await checkPendingCommands();
+  } finally {
+    pollingBusy = false;
+    if (!dashboardStopped && localStorage.getItem(API_CONFIG.TOKEN_KEY)) pollingTimer = setTimeout(pollDashboard, 2000);
   }
 }
 
-/**
- * Gắn sự kiện cho các công tắc điều khiển thiết bị
- */
-function setupDeviceControls() {
-  const switches = document.querySelectorAll('.switch-control input[type="checkbox"]');
-
-  switches.forEach(switchInput => {
-    switchInput.addEventListener('change', async function () {
-      const device = this.getAttribute('data-device');
-      const action = this.checked ? 'ON' : 'OFF';
-      const previousChecked = !this.checked;
-      const deviceLabel = DEVICE_NAMES[device] || device;
-      const parentLabel = this.closest('.switch-control');
-
-      // Tạm khóa công tắc và bật hiệu ứng loading
-      this.disabled = true;
-      if (parentLabel) parentLabel.classList.add('loading');
-
-      const currentUser = (typeof Auth !== 'undefined' && typeof Auth.getCurrentUser === 'function')
-        ? (Auth.getCurrentUser()?.username || 'Admin')
-        : 'Admin';
-
-      try {
-        const response = await apiRequest('/api/devices/control', {
-          method: 'POST',
-          body: JSON.stringify({ device, action, user: currentUser }),
-          silent: true
-        });
-
-        // Kiểm tra phản hồi thành công (200 OK)
-        if (response && (response.status === 'success' || response.device_status === action)) {
-          this.checked = (action === 'ON');
-          updateDeviceVisual(device, action === 'ON');
-          showToast(`Đã chuyển trạng thái ${deviceLabel} sang: ${action}`, 'success');
-        } else {
-          throw new Error(response.message || 'Phản hồi không thành công');
-        }
-      } catch (error) { 
-        // Khi chưa chạy Backend hoặc lỗi mạng, tự động chuyển sang chế độ mô phỏng để test UI & hiệu ứng hoạt họa
-        console.warn(`Backend offline khi điều khiển ${deviceLabel}. Chạy chế độ mô phỏng:`, error.message);
-
-        // Tạo độ trễ nhẹ 150ms giả lập xử lý phần cứng
-        await new Promise(resolve => setTimeout(resolve, 150));
-
-        this.checked = (action === 'ON');
-        updateDeviceVisual(device, action === 'ON');
-
-        // Lưu trạng thái tạm vào sessionStorage để giữ trạng thái khi reload trang
-        try {
-          sessionStorage.setItem(`mock_device_${device}`, action);
-        } catch (_) {}
-
-        // showToast(`[Mô phỏng] Đã ${action === 'ON' ? 'bật' : 'tắt'} ${deviceLabel}`, 'info');
-      } finally {
-        // Mở khóa lại công tắc
-        this.disabled = false;
-        if (parentLabel) parentLabel.classList.remove('loading');
-      }
+async function sendDeviceControl(input) {
+  const device = input.getAttribute('data-device');
+  const action = input.checked ? 'ON' : 'OFF';
+  if (!deviceApiReady || pendingCommands.has(device)) {
+    updateDeviceVisual(device);
+    return;
+  }
+  pendingCommands.set(device, {});
+  updateDeviceVisual(device); // Trả switch về trạng thái xác nhận trước đó, khóa khi đang chờ.
+  try {
+    const receipt = await apiRequest('/api/devices/control', {
+      method: 'POST', body: JSON.stringify({ device, action }), silent: true
     });
-  });
+    if (!receipt?.command_id || receipt.command_status !== 'pending') throw new Error('Phản hồi tiếp nhận lệnh không hợp lệ');
+    pendingCommands.set(device, receipt);
+    showToast(DEVICE_NAMES[device] + ': đã gửi lệnh, đang chờ ACK', 'info');
+    // Chu kỳ poll tuần tự sẽ xác minh đúng command_id, không chỉ so sánh ON/OFF.
+  } catch (error) {
+    pendingCommands.delete(device);
+    showToast(error.status === 409 ? 'Thiết bị đang có lệnh chờ. Xem lịch sử và thử lại sau.' :
+      error.status === 503 ? 'MQTT chưa sẵn sàng hoặc gửi lệnh thất bại. Kiểm tra broker/lịch sử.' :
+        error.status === 0 ? 'Mất kết nối: chưa xác minh được kết quả gửi, kiểm tra lịch sử trước khi thử lại.' : error.message, 'error');
+    await loadDeviceStatuses();
+  } finally { updateDeviceVisual(device); }
 }
 
-/**
- * Khởi động toàn bộ trang Dashboard khi DOM sẵn sàng
- */
 document.addEventListener('DOMContentLoaded', async () => {
-  // Cài đặt tương tác công tắc
-  setupDeviceControls();
-
-  // Khởi tạo dữ liệu ban đầu
-  await Promise.allSettled([
-    loadDeviceStatuses(),
-    loadInitialChartData()
-  ]);
-
-  // Kích hoạt chu kỳ Polling mỗi 2s
-  pollLatestSensorData(); // Gọi ngay lần đầu
-  pollingTimer = setInterval(pollLatestSensorData, 2000);
+  if (!dashboardAuthenticated) return;
+  replaceChart([]);
+  updateSensorCards(null, null, null);
+  Object.keys(DEVICE_NAMES).forEach(code => updateDeviceVisual(code));
+  document.querySelectorAll('.switch-control input[type="checkbox"]').forEach(input => {
+    input.addEventListener('change', () => sendDeviceControl(input));
+  });
+  await pollDashboard();
 });
 
-// Dọn dẹp timer polling khi rời khỏi trang
 window.addEventListener('beforeunload', () => {
-  if (pollingTimer) {
-    clearInterval(pollingTimer);
-  }
+  dashboardStopped = true;
+  clearTimeout(pollingTimer);
 });

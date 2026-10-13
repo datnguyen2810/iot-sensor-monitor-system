@@ -30,21 +30,21 @@ public class MqttService implements MqttCallbackExtended {
     private final IMqttClient mqttClient;
     private final MqttConnectOptions mqttConnectOptions;
     private final ObjectMapper objectMapper;
-    private final SensorMeasurementService measurements;
-    private final DeviceCommandTransactions commands;
+    private final SensorService sensorService;
+    private final HistoryService historyService;
     private final ScheduledExecutorService connectionExecutor;
     private volatile boolean stopping;
     private volatile boolean subscribed;
     private ScheduledFuture<?> connectionTask;
 
     public MqttService(IMqttClient mqttClient, MqttConnectOptions mqttConnectOptions,
-                       ObjectMapper objectMapper, SensorMeasurementService measurements,
-                       DeviceCommandTransactions commands, ScheduledExecutorService connectionExecutor) {
+                       ObjectMapper objectMapper, SensorService sensorService,
+                       HistoryService historyService, ScheduledExecutorService connectionExecutor) {
         this.mqttClient = mqttClient;
         this.mqttConnectOptions = mqttConnectOptions;
         this.objectMapper = objectMapper;
-        this.measurements = measurements;
-        this.commands = commands;
+        this.sensorService = sensorService;
+        this.historyService = historyService;
         this.connectionExecutor = connectionExecutor;
     }
 
@@ -164,7 +164,7 @@ public class MqttService implements MqttCallbackExtended {
             return;
         }
         try {
-            measurements.persist(measurement);
+            sensorService.saveMeasurement(measurement);
             log.debug("Stored sensor measurement");
         } catch (RuntimeException exception) {
             // Do not silently acknowledge a database failure as a successful ingestion.
@@ -182,6 +182,6 @@ public class MqttService implements MqttCallbackExtended {
             return;
         }
         // Service proxy owns the DB transaction; DB failures propagate rather than silently ACKing MQTT.
-        commands.acknowledge(ack);
+        historyService.handleAcknowledgement(ack);
     }
 }

@@ -2,9 +2,9 @@ package com.iot.backend;
 
 import com.iot.backend.dto.mqtt.SensorMeasurementPayload;
 import com.iot.backend.config.MqttConfig;
-import com.iot.backend.service.DeviceCommandTransactions;
+import com.iot.backend.service.HistoryService;
 import com.iot.backend.service.MqttService;
-import com.iot.backend.service.SensorMeasurementService;
+import com.iot.backend.service.SensorService;
 import org.eclipse.paho.client.mqttv3.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -23,11 +23,11 @@ import static org.mockito.Mockito.*;
 class MqttIngestionTests {
     private final IMqttClient client = mock(IMqttClient.class);
     private final ScheduledExecutorService executor = mock(ScheduledExecutorService.class);
-    private final SensorMeasurementService measurements = mock(SensorMeasurementService.class);
+    private final SensorService measurements = mock(SensorService.class);
     private final JsonMapper mapper = JsonMapper.builder().build();
     private final MqttConnectOptions options = new MqttConnectOptions();
     private final MqttService mqtt = new MqttService(client, options, mapper, measurements,
-            mock(DeviceCommandTransactions.class), executor);
+            mock(HistoryService.class), executor);
 
     @Test
     void connectionConfigurationUsesOneRetryOwnerDurableSessionAndBoundedWaits() throws Exception {
@@ -64,9 +64,9 @@ class MqttIngestionTests {
     @Test
     void acceptsBoundaryValuesAndIgnoresUnrelatedUtf8Fields() {
         receive("{\"temperature\":-10,\"humidity\":100,\"light\":0,\"note\":\"mẫu đo\"}");
-        verify(measurements).persist(new SensorMeasurementPayload(-10, 100, 0));
+        verify(measurements).saveMeasurement(new SensorMeasurementPayload(-10, 100, 0));
         receive("{\"temperature\":25,\"humidity\":0,\"light\":1}");
-        verify(measurements).persist(new SensorMeasurementPayload(25, 0, 1));
+        verify(measurements).saveMeasurement(new SensorMeasurementPayload(25, 0, 1));
     }
 
     @Test
@@ -77,7 +77,7 @@ class MqttIngestionTests {
 
     @Test
     void databaseFailureIsNotAcknowledgedAsSuccessfulIngestion() {
-        doThrow(new IllegalStateException("database unavailable")).when(measurements).persist(any());
+        doThrow(new IllegalStateException("database unavailable")).when(measurements).saveMeasurement(any());
         assertThatThrownBy(() -> receive("{\"temperature\":1,\"humidity\":2,\"light\":3}"))
                 .isInstanceOf(IllegalStateException.class);
     }

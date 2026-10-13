@@ -103,12 +103,12 @@
             <!-- Dropdown chọn trạng thái -->
             <select id="statusFilter" class="filter-select">
               <option value="">Trạng Thái</option>
-              <option value="ON">ON</option>
-              <option value="OFF">OFF</option>
+              <option value="success">success</option>
+              <option value="failed">failed</option>
+              <option value="pending">pending</option>
             </select>
-
             <!-- Ô nhập tìm kiếm thời gian -->
-            <input type="text" id="timeSearchInput" class="filter-input" placeholder="Nhập thời gian">
+            <input type="text" id="timeSearchInput" class="filter-input" maxlength="100" placeholder="Nhập thời gian">
 
             <!-- Nút bấm Tìm kiếm -->
             <button id="btnSearch" class="btn-search">
@@ -154,7 +154,7 @@
         <div class="table-footer">
           <div class="pagination-info">
             <span class="page-stat-badge">
-              Trang <strong id="currentPageDisplay">1</strong> / <strong id="totalPagesDisplay">10</strong>
+              Trang <strong id="currentPageDisplay">1</strong> / <strong id="totalPagesDisplay">1</strong>
             </span>
             <span class="stat-divider">•</span>
             <div class="page-size-wrapper">

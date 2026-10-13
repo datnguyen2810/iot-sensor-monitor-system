@@ -87,15 +87,15 @@
           <div class="toolbar-left">
             <!-- Dropdown chọn tiêu chí lọc / loại cảm biến -->
             <select id="sensorTypeFilter" class="filter-select">
-              <option value="">Tất cả</option>
-              <option value="Thời Gian">Thời Gian</option>
-              <option value="Nhiệt Độ">Nhiệt Độ</option>
-              <option value="Độ Ẩm">Độ Ẩm</option>
-              <option value="Ánh Sáng">Ánh Sáng</option>
+              <option value="all">Tất cả</option>
+              <option value="time">Thời Gian</option>
+              <option value="temperature">Nhiệt Độ</option>
+              <option value="humidity">Độ Ẩm</option>
+              <option value="light">Ánh Sáng</option>
             </select>
 
             <!-- Ô nhập giá trị tìm kiếm -->
-            <input type="text" id="timeSearchInput" class="filter-input" placeholder="Nhập giá trị">
+            <input type="text" id="timeSearchInput" class="filter-input" maxlength="100" placeholder="Giá trị hoặc YYYY-MM-DD HH:mm:ss">
 
             <!-- Nút bấm Tìm kiếm -->
             <button id="btnSearch" class="btn-search">
@@ -139,7 +139,7 @@
         <div class="table-footer">
           <div class="pagination-info">
             <span class="page-stat-badge">
-              Trang <strong id="currentPageDisplay">1</strong> / <strong id="totalPagesDisplay">10</strong>
+              Trang <strong id="currentPageDisplay">1</strong> / <strong id="totalPagesDisplay">1</strong>
             </span>
             <span class="stat-divider">•</span>
             <div class="page-size-wrapper">

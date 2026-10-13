@@ -1,9 +1,9 @@
 package com.iot.backend;
 
 import com.iot.backend.dto.mqtt.DeviceAcknowledgement;
-import com.iot.backend.service.DeviceCommandTransactions;
+import com.iot.backend.service.HistoryService;
 import com.iot.backend.service.MqttService;
-import com.iot.backend.service.SensorMeasurementService;
+import com.iot.backend.service.SensorService;
 import org.eclipse.paho.client.mqttv3.*;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -15,22 +15,22 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
 class MqttCommandStatusTests {
-    private final DeviceCommandTransactions commands = mock(DeviceCommandTransactions.class);
+    private final HistoryService commands = mock(HistoryService.class);
     private final MqttService mqtt = new MqttService(mock(IMqttClient.class), new MqttConnectOptions(),
-            JsonMapper.builder().build(), mock(SensorMeasurementService.class), commands,
+            JsonMapper.builder().build(), mock(SensorService.class), commands,
             mock(ScheduledExecutorService.class));
 
     @ParameterizedTest
     @ValueSource(strings = {"ON", "OFF", "success", "failed", "pending"})
     void validatedCorrelatedAckIsPassedToTransactionalHandler(String status) {
         receive("{\"device\":\"led\",\"command_id\":12,\"status\":\"" + status + "\"}");
-        verify(commands).acknowledge(new DeviceAcknowledgement(12, "led", status, ""));
+        verify(commands).handleAcknowledgement(new DeviceAcknowledgement(12, "led", status, ""));
     }
 
     @Test
     void explicitPhysicalStateIsPreserved() {
         receive("{\"device\":\"led\",\"command_id\":12,\"status\":\"failed\",\"device_status\":\"OFF\"}");
-        verify(commands).acknowledge(new DeviceAcknowledgement(12, "led", "failed", "OFF"));
+        verify(commands).handleAcknowledgement(new DeviceAcknowledgement(12, "led", "failed", "OFF"));
     }
 
     @ParameterizedTest
@@ -54,7 +54,7 @@ class MqttCommandStatusTests {
 
     @Test
     void databaseFailurePropagatesToMqttInsteadOfSilentlyDroppingAck() {
-        doThrow(new IllegalStateException("DB unavailable")).when(commands).acknowledge(any());
+        doThrow(new IllegalStateException("DB unavailable")).when(commands).handleAcknowledgement(any());
         assertThatThrownBy(() -> receive("{\"device\":\"led\",\"command_id\":12,\"status\":\"ON\"}"))
                 .isInstanceOf(IllegalStateException.class);
     }

@@ -2,9 +2,9 @@ package com.iot.backend;
 
 import com.iot.backend.entity.DataSensor;
 import com.iot.backend.dto.mqtt.SensorMeasurementPayload;
-import com.iot.backend.service.SensorMeasurementService;
+import com.iot.backend.service.SensorService;
 import com.iot.backend.service.MqttService;
-import com.iot.backend.service.DeviceCommandTransactions;
+import com.iot.backend.service.HistoryService;
 import org.eclipse.paho.client.mqttv3.IMqttClient;
 import org.eclipse.paho.client.mqttv3.MqttConnectOptions;
 import org.eclipse.paho.client.mqttv3.MqttMessage;
@@ -20,7 +20,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import com.iot.backend.repository.DataSensorRepository;
 import com.iot.backend.repository.SensorRepository;
 import com.iot.backend.security.JwtTokenProvider;
-import com.iot.backend.service.SensorService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -55,7 +54,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 public class SensorApiTests {
     @Autowired SensorService service;
     @MockitoSpyBean DataSensorRepository records;
-    @Autowired SensorMeasurementService ingestion;
+    @Autowired SensorService ingestion;
     @Autowired ObjectMapper mapper;
     @Autowired PlatformTransactionManager transactionManager;
     @Autowired SensorRepository sensors;
@@ -83,7 +82,7 @@ public class SensorApiTests {
     @Test
     void mqttPayloadCreatesExactlyThreeRowsReadableByLatestAndChart() {
         var mqtt = new MqttService(mock(IMqttClient.class), new MqttConnectOptions(), mapper, ingestion,
-                mock(DeviceCommandTransactions.class), mock(ScheduledExecutorService.class));
+                mock(HistoryService.class), mock(ScheduledExecutorService.class));
         var message = new MqttMessage("{\"temperature\":28.5,\"humidity\":65,\"light\":0}"
                 .getBytes(StandardCharsets.UTF_8));
         mqtt.messageArrived("iot/sensor/data", message);
@@ -99,8 +98,8 @@ public class SensorApiTests {
 
     @Test
     void twoBatchesWithSameTimestampAreSkippedRatherThanMixed() {
-        ingestion.persist(new SensorMeasurementPayload(1, 2, 3));
-        ingestion.persist(new SensorMeasurementPayload(4, 5, 6));
+        ingestion.saveMeasurement(new SensorMeasurementPayload(1, 2, 3));
+        ingestion.saveMeasurement(new SensorMeasurementPayload(4, 5, 6));
         jdbc.update("UPDATE datasensors SET created_at = ?", Timestamp.valueOf(START));
         assertThat(service.getChartData()).isEmpty();
         assertThat(service.getLatestData()).isNull();
@@ -121,14 +120,14 @@ public class SensorApiTests {
             return batch;
         }).when(records).saveAllAndFlush(any());
         try {
-            assertThatThrownBy(() -> ingestion.persist(new SensorMeasurementPayload(1, 2, 3)))
+            assertThatThrownBy(() -> ingestion.saveMeasurement(new SensorMeasurementPayload(1, 2, 3)))
                     .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
         } finally {
             reset(records);
         }
         assertThat(records.count()).isZero();
         try {
-            ingestion.persist(new SensorMeasurementPayload(1, 2, 3));
+            ingestion.saveMeasurement(new SensorMeasurementPayload(1, 2, 3));
             assertThat(records.count()).isEqualTo(3);
         } finally {
             new TransactionTemplate(transactionManager).executeWithoutResult(status -> {
@@ -152,7 +151,7 @@ public class SensorApiTests {
     void emptyDatabaseReturnsNullAndEmptyCollections() throws Exception {
         assertThat(service.getLatestData()).isNull();
         assertThat(service.getChartData()).isEmpty();
-        var page = service.getHistory(5, 10, "", "", "", "desc");
+        var page = service.getHistory(5, 10, "", "all", "desc");
         assertThat(page.getData()).isEmpty();
         assertThat(page.getTotalRecords()).isZero();
         assertThat(page.getTotalPages()).isEqualTo(1);
@@ -193,30 +192,30 @@ public class SensorApiTests {
     void historySupportsExactSensorValueTimeAndAllFieldsSearch() {
         sample(START, 30.5f, 83, 850);
         sample(START.plusDays(1), 31.2f, 80, 754);
-        assertThat(service.getHistory(1, 10, "Nhiệt Độ", "30.5", "value", "desc").getTotalRecords()).isEqualTo(1);
-        assertThat(service.getHistory(1, 10, "Độ Ẩm", "", "", "desc").getTotalRecords()).isEqualTo(2);
-        assertThat(service.getHistory(1, 10, "Ánh Sáng", "", "", "desc").getTotalRecords()).isEqualTo(2);
-        assertThat(service.getHistory(1, 10, "", "2026-10-07", "time", "desc").getTotalRecords()).isEqualTo(3);
-        assertThat(service.getHistory(1, 10, "", "10:00", "time", "desc").getTotalRecords()).isEqualTo(6);
-        assertThat(service.getHistory(1, 10, "", "nhiệt", "", "desc").getTotalRecords()).isEqualTo(2);
-        assertThat(service.getHistory(1, 10, "", "850", "", "desc").getTotalRecords()).isEqualTo(1);
-        assertThat(service.getHistory(1, 10, "", "%", "", "desc").getData()).isEmpty();
-        assertThat(service.getHistory(1, 10, "", "_", "time", "desc").getData()).isEmpty();
+        assertThat(service.getHistory(1, 10, "30.5", "temperature", "desc").getTotalRecords()).isEqualTo(1);
+        assertThat(service.getHistory(1, 10, "", "humidity", "desc").getTotalRecords()).isEqualTo(2);
+        assertThat(service.getHistory(1, 10, "", "light", "desc").getTotalRecords()).isEqualTo(2);
+        assertThat(service.getHistory(1, 10, "2026-10-07", "time", "desc").getTotalRecords()).isEqualTo(3);
+        assertThat(service.getHistory(1, 10, "10:00", "time", "desc").getTotalRecords()).isEqualTo(6);
+        assertThat(service.getHistory(1, 10, "nhiệt", "all", "desc").getTotalRecords()).isEqualTo(2);
+        assertThat(service.getHistory(1, 10, "850", "all", "desc").getTotalRecords()).isEqualTo(1);
+        assertThat(service.getHistory(1, 10, "%", "all", "desc").getData()).isEmpty();
+        assertThat(service.getHistory(1, 10, "_", "time", "desc").getData()).isEmpty();
     }
 
     @Test
     void paginationIsStableAndOutOfRangeNeverRepeatsFirstPage() {
         sample(START, 30, 60, 650);
-        var first = service.getHistory(1, 2, "", "", "", "asc");
-        var second = service.getHistory(2, 2, "", "", "", "asc");
+        var first = service.getHistory(1, 2, "", "all", "asc");
+        var second = service.getHistory(2, 2, "", "all", "asc");
         assertThat(first.getTotalRecords()).isEqualTo(3);
         assertThat(first.getTotalPages()).isEqualTo(2);
         assertThat(first.getData()).hasSize(2);
         assertThat(second.getData()).hasSize(1);
         List<Integer> ids = records.findAll().stream().map(DataSensor::getId).sorted().toList();
         assertThat(first.getData().getFirst().getId()).isEqualTo(ids.getFirst());
-        assertThat(service.getHistory(1, 2, "", "", "", "desc").getData().getFirst().getId()).isEqualTo(ids.getLast());
-        var beyond = service.getHistory(10, 2, "", "", "", "asc");
+        assertThat(service.getHistory(1, 2, "", "all", "desc").getData().getFirst().getId()).isEqualTo(ids.getLast());
+        var beyond = service.getHistory(10, 2, "", "all", "asc");
         assertThat(beyond.getCurrentPage()).isEqualTo(10);
         assertThat(beyond.getData()).isEmpty();
     }
@@ -226,32 +225,44 @@ public class SensorApiTests {
         sample(START, 30.5f, 50, 650);
         sample(START.plusMinutes(1), 30.5f, 60, 750);
         sample(START.plusDays(1), 40, 70, 850);
-        for (String mode : List.of("", "value")) {
-            var page = service.getHistory(2, 1, "Nhiệt Độ", "30.5", mode, "asc");
+        for (String type : List.of("all", "temperature")) {
+            var page = service.getHistory(2, 1, "30.5", type, "asc");
             assertThat(page.getTotalRecords()).isEqualTo(2);
             assertThat(page.getTotalPages()).isEqualTo(2);
             assertThat(page.getData()).hasSize(1);
             assertThat(page.getData().getFirst().getValue()).isEqualTo(30.5f);
         }
-        for (String mode : List.of("", "time")) {
-            var page = service.getHistory(2, 1, "Nhiệt Độ", "2026-10-07", mode, "asc");
-            assertThat(page.getTotalRecords()).isEqualTo(2);
+        for (String type : List.of("all", "time")) {
+            var page = service.getHistory(2, 3, "2026-10-07", type, "asc");
+            assertThat(page.getTotalRecords()).isEqualTo(6);
             assertThat(page.getTotalPages()).isEqualTo(2);
-            assertThat(page.getData()).hasSize(1);
+            assertThat(page.getData()).hasSize(3);
             assertThat(page.getData().getFirst().getCreatedAt()).isEqualTo("2026-10-07T10:01:00+07:00");
         }
-        assertThat(service.getHistory(1, 10, "", "nhiệt", "value", "asc").getTotalRecords()).isZero();
-        assertThat(service.getHistory(1, 10, "", "nhiệt", "time", "asc").getTotalRecords()).isZero();
+        assertThat(service.getHistory(1, 10, "nhiệt", "temperature", "asc").getTotalRecords()).isZero();
+        assertThat(service.getHistory(1, 10, "nhiệt", "time", "asc").getTotalRecords()).isZero();
     }
 
     @Test
-    void fullDateSearchExcludesNextMidnightAndInvalidDateDoesNotMatch() {
+    void dateLikeSearchExcludesOtherDatesAndInvalidDateDoesNotMatch() {
         sample(START.toLocalDate().atStartOfDay(), 1, 2, 3);
         sample(START.toLocalDate().atTime(23, 59, 59), 4, 5, 6);
         sample(START.toLocalDate().plusDays(1).atStartOfDay(), 7, 8, 9);
-        assertThat(service.getHistory(1, 10, "", "2026-10-07", "time", "asc").getTotalRecords()).isEqualTo(6);
-        assertThat(service.getHistory(1, 10, "", "2026-02-30", "time", "asc").getTotalRecords()).isZero();
-        assertThat(service.getHistory(1, 10, "", "  ", "time", "asc").getTotalRecords()).isEqualTo(9);
+        assertThat(service.getHistory(1, 10, "2026-10-07", "time", "asc").getTotalRecords()).isEqualTo(6);
+        assertThat(service.getHistory(1, 10, "2026-02-30", "time", "asc").getTotalRecords()).isZero();
+        assertThat(service.getHistory(1, 10, "  ", "time", "asc").getTotalRecords()).isEqualTo(9);
+    }
+
+    @ParameterizedTest
+    @CsvSource({"time,2026-10-07,3", "time,2026-10,6", "time,10-07,3", "time,10:00,6",
+            "time,2026-10-07 10:00:00,3", "all,2026-10-07 10:00:00,3", "time,2026-02-30,0"})
+    void timeLikeSupportsDateFragmentsTimeAndCopiedTimestamp(String type, String keyword, int count) throws Exception {
+        sample(START, 28.5f, 65, 534);
+        sample(START.plusDays(1), 30, 70, 600);
+        mvc.perform(get("/api/sensors/history").param("search_type", type).param("search", keyword)
+                        .header("Authorization", "Bearer " + tokens.generateTokenFromUsername("admin")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.total_records").value(count))
+                .andExpect(jsonPath("$.data.data.length()").value(count));
     }
 
     @Test
@@ -262,18 +273,18 @@ public class SensorApiTests {
         sample(START, 30, 60, 650);
         sample(START.plusMinutes(1), 31, 61, 651);
         for (String keyword : List.of("_", "%", "!", "'")) {
-            var page = service.getHistory(1, 1, "", keyword, "", "asc");
+            var page = service.getHistory(1, 1, keyword, "all", "asc");
             assertThat(page.getTotalRecords()).isEqualTo(2);
             assertThat(page.getTotalPages()).isEqualTo(2);
             assertThat(page.getData()).hasSize(1);
             assertThat(page.getData().getFirst().getSensorName()).isEqualTo("Literal_%!'");
         }
-        assertThat(service.getHistory(1, 10, "", "' OR 1=1 --", "", "asc").getTotalRecords()).isZero();
+        assertThat(service.getHistory(1, 10, "' OR 1=1 --", "all", "asc").getTotalRecords()).isZero();
     }
 
     @ParameterizedTest
     @CsvSource({"page,0", "page,-1", "limit,0", "limit,101", "sort,wrong",
-            "sensor_type,Nhiệt", "search_type,wrong", "page,abc"})
+            "search_type,Nhiệt", "search_type,wrong", "search_type,value", "search_type,Temperature", "page,abc"})
     void invalidQueryParametersReturn400(String field, String value) throws Exception {
         mvc.perform(get("/api/sensors/history").param(field, value)
                 .header("Authorization", "Bearer " + tokens.generateTokenFromUsername("admin")))
@@ -283,8 +294,7 @@ public class SensorApiTests {
     @Test
     void historyEndpointAcceptsFrontendQueryAndReturnsPaginationPayload() throws Exception {
         sample(START, 30.5f, 83, 850);
-        mvc.perform(get("/api/sensors/history").param("sensor_type", "Nhiệt Độ")
-                .param("search_type", "value").param("search", "30.5")
+        mvc.perform(get("/api/sensors/history").param("search_type", "temperature").param("search", "30.5")
                 .header("Authorization", "Bearer " + tokens.generateTokenFromUsername("admin")))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.data.total_records").value(1))
                 .andExpect(jsonPath("$.data.total_pages").value(1))
@@ -294,5 +304,35 @@ public class SensorApiTests {
         mvc.perform(get("/api/sensors/history").param("search", "x".repeat(101))
                 .header("Authorization", "Bearer " + tokens.generateTokenFromUsername("admin")))
                 .andExpect(status().isBadRequest());
+    }
+
+    @ParameterizedTest
+    @CsvSource({"all,30.5,3", "temperature,30.5,1", "humidity,30.5,1", "light,30.5,1",
+            "time,2026-10-07 10:00:00,3"})
+    void singleSearchTypeSelectsOnlyRequestedField(String type, String keyword, int count) throws Exception {
+        sample(START, 30.5f, 30.5f, 30.5f);
+        mvc.perform(get("/api/sensors/history").param("search_type", type).param("search", keyword)
+                        .header("Authorization", "Bearer " + tokens.generateTokenFromUsername("admin")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.total_records").value(count))
+                .andExpect(jsonPath("$.data.data.length()").value(count));
+        var rows = service.getHistory(1, 10, keyword, type, "desc").getData();
+        if (count == 1) {
+            String expected = switch (type) {
+                case "temperature" -> "Nhiệt Độ";
+                case "humidity" -> "Độ Ẩm";
+                default -> "Ánh Sáng";
+            };
+            assertThat(rows).extracting(row -> row.getSensorName()).containsOnly(expected);
+        }
+    }
+
+    @Test
+    void missingSearchTypeDefaultsToAllAndServiceRejectsLegacyMode() throws Exception {
+        sample(START, 30.5f, 30.5f, 30.5f);
+        mvc.perform(get("/api/sensors/history").param("search", "30.5")
+                        .header("Authorization", "Bearer " + tokens.generateTokenFromUsername("admin")))
+                .andExpect(status().isOk()).andExpect(jsonPath("$.data.total_records").value(3));
+        assertThatThrownBy(() -> service.getHistory(1, 10, "30.5", "value", "desc"))
+                .isInstanceOf(org.springframework.web.server.ResponseStatusException.class);
     }
 }

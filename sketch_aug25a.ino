@@ -140,9 +140,9 @@ void loop() {
   }
   client.loop();
 
-  // Đọc và gửi dữ liệu cảm biến định kỳ mỗi 5 giây
+  // Đọc và gửi dữ liệu cảm biến định kỳ mỗi 2 giây
   unsigned long now = millis();
-  if (now - lastMsg > 5000) {
+  if (now - lastMsg > 2000) {
     lastMsg = now;
 
     float h = dht.readHumidity();

@@ -39,10 +39,11 @@ function showToast(message, type = 'info', duration = 3500) {
 
   toast.innerHTML = `
     ${iconSvg}
-    <div class="toast-message">${message}</div>
+    <div class="toast-message"></div>
     <button class="toast-close" title="Đóng">&times;</button>
   `;
 
+  toast.querySelector('.toast-message').textContent = message;
   const closeBtn = toast.querySelector('.toast-close');
   closeBtn.addEventListener('click', () => {
     toast.remove();
@@ -62,79 +63,66 @@ function showToast(message, type = 'info', duration = 3500) {
  * @param {object} options - Tùy chọn fetch (method, headers, body, ...)
  * @returns {Promise<any>}
  */
-async function apiRequest(endpoint, options = {}) {
-  const url = endpoint.startsWith('http') ? endpoint : `${API_CONFIG.BASE_URL}${endpoint}`;
-  
-  const headers = {
-    'Content-Type': 'application/json',
-    ...(options.headers || {})
-  };
+let authRedirectScheduled = false;
 
-  const token = localStorage.getItem(API_CONFIG.TOKEN_KEY);
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), options.timeout || API_CONFIG.DEFAULT_TIMEOUT);
-
-  try {
-    const response = await fetch(url, {
-      ...options,
-      headers,
-      signal: controller.signal
-    });
-
-    clearTimeout(timeoutId);
-
-    // Xử lý lỗi xác thực 401 Unauthorized
-    if (response.status === 401) {
-      localStorage.removeItem(API_CONFIG.TOKEN_KEY);
-      localStorage.removeItem(API_CONFIG.USER_KEY);
-      showToast('Phiên đăng nhập đã hết hạn. Vui lòng đăng nhập lại!', 'warning');
-      setTimeout(() => {
-        if (!window.location.pathname.endsWith('index.html') && window.location.pathname !== '/') {
-          window.location.href = 'index.html';
-        }
-      }, 1200);
-      throw new Error('401 Unauthorized');
-    }
-
-    // Nếu không OK, đọc phản hồi lỗi từ server
-    if (!response.ok) {
-      let errorData = null;
-      try {
-        errorData = await response.json();
-      } catch (e) {
-        errorData = { message: `Lỗi máy chủ (${response.status})` };
-      }
-      const errMsg = errorData.message || `Lỗi máy chủ: ${response.status} ${response.statusText}`;
-      throw new Error(errMsg);
-    }
-
-    // Kiểm tra content-type để parse JSON hoặc text
-    const contentType = response.headers.get('content-type');
-    if (contentType && contentType.includes('application/json')) {
-      const json = await response.json();
-      // Tự động giải nén trường data nếu backend trả về chuẩn ApiResponse { status, message, data }
-      if (json && typeof json === 'object' && 'status' in json && 'data' in json) {
-        return json.data !== null && json.data !== undefined ? json.data : json;
-      }
-      return json;
-    }
-    return await response.text();
-
-  } catch (error) {
-    clearTimeout(timeoutId);
-    if (error.name === 'AbortError') {
-      showToast('Yêu cầu hết thời gian chờ (Timeout 10s)!', 'error');
-      throw new Error('Request Timeout');
-    }
-    // Không bắn toast nếu là endpoint polling ngầm hoặc caller muốn tự xử lý (silent)
-    if (!endpoint.includes('/latest') && !options.silent) {
-      showToast(error.message || 'Lỗi kết nối đến máy chủ Backend!', 'error');
-    }
-    throw error;
-  }
+function escapeHtml(value) {
+  return String(value ?? '').replace(/[&<>"']/g, char =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]);
 }
 
+function formatTime(value) {
+  if (!value) return '--';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+  // Khớp DATE_FORMAT của API để copy nguyên thời gian từ bảng vào ô tìm kiếm.
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Ho_Chi_Minh', year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23'
+  }).formatToParts(date);
+  const fields = Object.fromEntries(parts.map(part => [part.type, part.value]));
+  return `${fields.year}-${fields.month}-${fields.day} ${fields.hour}:${fields.minute}:${fields.second}`;
+}
+
+async function apiRequest(endpoint, options = {}) {
+  const { silent = false, timeout = API_CONFIG.DEFAULT_TIMEOUT, ...fetchOptions } = options;
+  const url = API_CONFIG.BASE_URL + endpoint;
+  const headers = { 'Content-Type': 'application/json', ...(fetchOptions.headers || {}) };
+  const token = localStorage.getItem(API_CONFIG.TOKEN_KEY);
+  const isLogin = endpoint === '/api/auth/login';
+  if (token && !isLogin) headers.Authorization = 'Bearer ' + token;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  try {
+    const response = await fetch(url, { ...fetchOptions, headers, signal: controller.signal });
+    let json;
+    try {
+      json = await response.json();
+    }
+    catch (error) {
+      if (error.name === 'AbortError') throw error;
+      throw Object.assign(new Error('Phản hồi backend không phải JSON hợp lệ'), { status: response.status, kind: 'protocol' });
+    }
+    if (!response.ok) {
+      if (response.status === 401 && !isLogin && !authRedirectScheduled) {
+        authRedirectScheduled = true;
+        localStorage.removeItem(API_CONFIG.TOKEN_KEY);
+        localStorage.removeItem(API_CONFIG.USER_KEY);
+        showToast('Phiên đăng nhập không hợp lệ. Vui lòng đăng nhập lại!', 'warning');
+        setTimeout(() => { window.location.href = 'index.html'; }, 800);
+      }
+      throw Object.assign(new Error(json.message || 'Lỗi máy chủ (' + response.status + ')'),
+        { status: response.status, data: json.data, kind: 'http' });
+    }
+    if (!json || typeof json !== 'object' || !('data' in json) || json.status !== response.status) {
+      throw Object.assign(new Error('Phản hồi không đúng hợp đồng ApiResponse'), { status: response.status, kind: 'protocol' });
+    }
+    return json.data; // Giữ nguyên null, không trả lại envelope.
+  } catch (cause) {
+    const error = cause.name === 'AbortError'
+      ? Object.assign(new Error('Yêu cầu hết thời gian chờ'), { status: 0, kind: 'timeout' })
+      : cause.status !== undefined ? cause
+        : Object.assign(new Error('Không kết nối được backend'), { status: 0, kind: 'network' });
+    if (!silent && !(error.status === 401 && !isLogin)) showToast(error.message, 'error');
+    throw error;
+  } finally { clearTimeout(timeoutId); }
+}

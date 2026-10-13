@@ -1,4 +1,6 @@
-package com.iot.backend.service;
+package com.iot.backend.scheduler;
+
+import com.iot.backend.service.HistoryService;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -14,8 +16,8 @@ import org.springframework.stereotype.Component;
 @ConditionalOnProperty(name = "devices.command.timeout-scheduler.enabled", havingValue = "true", matchIfMissing = true)
 public class DeviceCommandTimeoutTask {
     private static final Logger log = LoggerFactory.getLogger(DeviceCommandTimeoutTask.class);
-    private final DeviceCommandTransactions commands;
-    public DeviceCommandTimeoutTask(DeviceCommandTransactions commands) { this.commands = commands; }
+    private final HistoryService historyService;
+    public DeviceCommandTimeoutTask(HistoryService historyService) { this.historyService = historyService; }
 
     @Bean(name = "taskScheduler")
     public ThreadPoolTaskScheduler deviceTimeoutScheduler() {
@@ -29,7 +31,7 @@ public class DeviceCommandTimeoutTask {
     @Scheduled(fixedDelay = 1000)
     public void expirePendingCommands() {
         try {
-            for (String device : commands.expiredDeviceCodes()) commands.expire(device);
+            for (String device : historyService.findExpiredDevices()) historyService.expirePendingCommands(device);
         } catch (RuntimeException exception) {
             log.error("Unable to expire pending device commands; retry next tick", exception);
         }

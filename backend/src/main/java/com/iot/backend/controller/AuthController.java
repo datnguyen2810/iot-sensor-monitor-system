@@ -8,9 +8,6 @@ import jakarta.validation.Valid;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
-/**
- * Controller xử lý các yêu cầu liên quan đến xác thực (Auth).
- */
 @RestController
 @RequestMapping("/api/auth")
 public class AuthController {
@@ -21,13 +18,6 @@ public class AuthController {
         this.authService = authService;
     }
 
-    /**
-     * Endpoint đăng nhập tài khoản hệ thống.
-     * POST /api/auth/login
-     *
-     * @param loginRequest thông tin tài khoản hợp lệ (@Valid)
-     * @return ApiResponse chứa LoginResponse (token, username)
-     */
     @PostMapping("/login")
     public ResponseEntity<ApiResponse<LoginResponse>> login(@Valid @RequestBody LoginRequest loginRequest) {
         LoginResponse response = authService.login(loginRequest);
