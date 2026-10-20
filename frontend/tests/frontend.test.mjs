@@ -108,6 +108,86 @@ test('chart thay mẫu bằng dữ liệu thật, giữ số 0 và khóa timesta
   assert.equal(h.run('sensorChart.data.labels.length'), 2);
 });
 
+test('chart chỉ tải lần đầu; latest thêm cuối, bỏ mẫu trùng và giữ tối đa 15 điểm', async () => {
+  const rows = Array.from({ length: 15 }, (_, i) => ({
+    timestamp: `2026-10-14T10:30:${String(i).padStart(2, '0')}+07:00`,
+    temperature: i, humidity: i + 30, light: i + 100
+  }));
+  let latest = rows.at(-1);
+  let chartCalls = 0; let latestCalls = 0;
+  const h = harness(async url => {
+    if (url.endsWith('/chart')) { chartCalls++; return response(rows); }
+    if (url.endsWith('/latest')) { latestCalls++; return response(latest); }
+    return response([]);
+  });
+  h.load('dashboard.js');
+  await h.run('pollSensors()');
+  await h.run('pollSensors()');
+  assert.equal(chartCalls, 1);
+  assert.equal(latestCalls, 2);
+  assert.equal(h.run('sensorChart.data.labels.length'), 15);
+  latest = { timestamp: '2026-10-14T10:30:15+07:00', temperature: 0, humidity: 0, light: 0 };
+  await h.run('pollSensors()');
+  assert.equal(chartCalls, 1);
+  assert.deepEqual(Array.from(h.run('sensorChart.data.datasets[0].data')), [...rows.slice(1).map(r => r.temperature), 0]);
+  assert.equal(h.run('sensorChart.data.datasets[1].data.at(-1)'), 0);
+  assert.equal(h.run('sensorChart.data.datasets[2].data.at(-1)'), 0);
+  assert.equal(h.run('sensorChart.data.labels.at(-1)'), '10:30:15');
+  assert.equal(h.element('tempValue').textContent, '0.0');
+  latest = rows[0];
+  await h.run('pollSensors()');
+  assert.equal(h.run('lastChartTimestamp'), '2026-10-14T10:30:15+07:00');
+  latest = { ...latest, timestamp: '2026-10-15T10:30:15+07:00' };
+  await h.run('pollSensors()');
+  assert.equal(h.run('lastChartTimestamp'), latest.timestamp);
+  assert.equal(chartCalls, 1);
+});
+
+test('chart rỗng lần đầu vẫn thêm latest mới, null xóa dữ liệu, không tải chart lại', async () => {
+  let latest = null; let chartCalls = 0;
+  const h = harness(async url => {
+    if (url.endsWith('/chart')) { chartCalls++; return response([]); }
+    return response(latest);
+  });
+  h.load('dashboard.js');
+  await h.run('pollSensors()');
+  latest = { timestamp: '2026-10-14T10:30:00+07:00', temperature: 28, humidity: 60, light: 100 };
+  await h.run('pollSensors()');
+  assert.equal(h.run('sensorChart.data.labels.length'), 1);
+  latest = null;
+  await h.run('pollSensors()');
+  assert.equal(h.run('sensorChart.data.labels.length'), 0);
+  assert.equal(h.element('tempValue').textContent, '--');
+  assert.equal(chartCalls, 1);
+});
+
+test('lỗi latest hoặc chart: xóa dữ liệu, tải lại chart khi kết nối phục hồi', async () => {
+  let chartCalls = 0; let offline = false; let chartBroken = false;
+  const row = { timestamp: '2026-10-14T10:30:00+07:00', temperature: 28, humidity: 60, light: 100 };
+  const h = harness(async url => {
+    if (url.endsWith('/chart')) { chartCalls++; return response(chartBroken ? null : [row]); }
+    if (offline) throw new TypeError('offline');
+    return response(row);
+  });
+  h.load('dashboard.js');
+  await h.run('pollSensors()');
+  offline = true;
+  await h.run('pollSensors()');
+  assert.equal(h.run('chartLoaded'), false);
+  assert.equal(h.run('sensorChart.data.labels.length'), 0);
+  assert.equal(h.element('tempValue').textContent, '--');
+  offline = false; chartBroken = true;
+  await h.run('pollSensors()');
+  assert.equal(h.run('chartLoaded'), false);
+  chartBroken = false;
+  await h.run('pollSensors()');
+  assert.equal(chartCalls, 3);
+  assert.equal(h.run('chartLoaded'), true);
+  assert.equal(h.run('sensorChart.data.labels.length'), 1);
+  await h.run('pollSensors()');
+  assert.equal(chartCalls, 3);
+});
+
 test('polling không chồng chu kỳ', async () => {
   let resolve; let calls = 0;
   const wait = new Promise(done => { resolve = done; });

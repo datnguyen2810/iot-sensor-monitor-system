@@ -2,6 +2,7 @@
 const dashboardAuthenticated = Auth.requireAuth();
 let sensorChart = null;
 let lastChartTimestamp = null;
+let chartLoaded = false;
 let pollingTimer = null;
 let pollingBusy = false;
 let dashboardStopped = false;
@@ -169,16 +170,46 @@ function replaceChart(points) {
   sensorChart.update('none');
 }
 
+function appendLatestToChart(latest) {
+  if (!latest?.timestamp || latest.timestamp === lastChartTimestamp) return;
+  // Không thêm mẫu cũ nếu chart lần đầu đã nhận mẫu mới hơn latest.
+  if (lastChartTimestamp && new Date(latest.timestamp) < new Date(lastChartTimestamp)) return;
+  if (!sensorChart) {
+    initChart([latest]);
+    return;
+  }
+  sensorChart.data.labels.push(chartLabel(latest));
+  ['temperature', 'humidity', 'light'].forEach((key, index) => {
+    sensorChart.data.datasets[index].data.push(latest[key] ?? null);
+  });
+  if (sensorChart.data.labels.length > 15) {
+    sensorChart.data.labels.shift();
+    sensorChart.data.datasets.forEach(dataset => dataset.data.shift());
+  }
+  lastChartTimestamp = latest.timestamp;
+  sensorChart.update('none');
+}
+
 async function pollSensors() {
   try {
-    const [chart, latest] = await Promise.all([
-      apiRequest('/api/sensors/chart', { silent: true }),
-      apiRequest('/api/sensors/latest', { silent: true })
-    ]);
-    if (!Array.isArray(chart)) throw new Error('Dữ liệu chart không hợp lệ');
-    replaceChart(chart);
+    let latest;
+    if (!chartLoaded) {
+      const [chart, sample] = await Promise.all([
+        apiRequest('/api/sensors/chart', { silent: true }),
+        apiRequest('/api/sensors/latest', { silent: true })
+      ]);
+      if (!Array.isArray(chart)) throw new Error('Dữ liệu chart không hợp lệ');
+      replaceChart(chart);
+      chartLoaded = true;
+      latest = sample;
+    } else {
+      latest = await apiRequest('/api/sensors/latest', { silent: true });
+    }
+    if (latest) appendLatestToChart(latest);
+    else replaceChart([]);
     updateSensorCards(latest?.temperature, latest?.light, latest?.humidity);
   } catch (error) {
+    chartLoaded = false; // Khi kết nối lại, tải chart để đồng bộ mẫu bị bỏ lỡ.
     replaceChart([]);
     updateSensorCards(null, null, null);
   }
