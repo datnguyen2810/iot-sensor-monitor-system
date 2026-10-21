@@ -227,11 +227,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // Chọn tiêu chí chỉ đổi placeholder; bấm Tìm Kiếm/Enter mới áp dụng.
   sensorTypeFilter.addEventListener('change', () => {
     if (sensorTypeFilter.value === 'time') {
-      searchInput.placeholder = 'VD: 2026-10-09 10:55:04 hoặc 10:55';
+      searchInput.placeholder = 'Nhập thời gian';
     } else if (SENSOR_LABELS[sensorTypeFilter.value]) {
-      searchInput.placeholder = `Nhập giá trị ${SENSOR_LABELS[sensorTypeFilter.value]}...`;
+      searchInput.placeholder = `Nhập giá trị ${SENSOR_LABELS[sensorTypeFilter.value]}`;
     } else {
-      searchInput.placeholder = 'Nhập giá trị hoặc YYYY-MM-DD HH:mm:ss';
+      searchInput.placeholder = 'Nhập giá trị';
     }
   });
 
