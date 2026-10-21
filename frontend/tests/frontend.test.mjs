@@ -108,6 +108,34 @@ test('chart thay mẫu bằng dữ liệu thật, giữ số 0 và khóa timesta
   assert.equal(h.run('sensorChart.data.labels.length'), 2);
 });
 
+test('chart dùng trục trái cho nhiệt độ/độ ẩm, trục phải cho ánh sáng và thang tự động', () => {
+  const h = harness(); h.load('dashboard.js'); h.run('initChart([])');
+  assert.deepEqual(Array.from(h.run('sensorChart.data.datasets.map(dataset => dataset.yAxisID)')), ['y', 'y', 'yLight']);
+  for (const [id, position, title] of [['y', 'left', 'Nhiệt độ (°C) / Độ ẩm (%)'], ['yLight', 'right', 'Ánh sáng (Lux)']]) {
+    const axis = h.run(`sensorChart.options.scales.${id}`);
+    assert.equal(axis.type, 'linear');
+    assert.equal(axis.position, position);
+    assert.equal(axis.beginAtZero, false);
+    assert.equal(axis.grace, '10%');
+    assert.equal(axis.title.text, title);
+    assert.equal(axis.ticks.stepSize, undefined);
+    assert.equal(axis.min, undefined);
+    assert.equal(axis.max, undefined);
+  }
+  assert.equal(h.run('sensorChart.options.scales.yLight.grid.drawOnChartArea'), false);
+});
+
+test('chart hai trục giữ nguyên số đo khi tải và thêm latest', () => {
+  const h = harness(); h.load('dashboard.js');
+  h.run(`replaceChart([{ timestamp: '2026-10-21T10:30:00+07:00', temperature: 29.2, humidity: 51.1, light: 850 }]);
+    appendLatestToChart({ timestamp: '2026-10-21T10:30:02+07:00', temperature: 29.4, humidity: 51.2, light: 830 });`);
+  const expected = [[29.2, 29.4], [51.1, 51.2], [850, 830]];
+  expected.forEach((values, index) => {
+    assert.deepEqual(Array.from(h.run(`sensorChart.data.datasets[${index}].data`)), values);
+  });
+  assert.equal(h.run('sensorChart.options.scales.yLight.position'), 'right');
+});
+
 test('chart chỉ tải lần đầu; latest thêm cuối, bỏ mẫu trùng và giữ tối đa 15 điểm', async () => {
   const rows = Array.from({ length: 15 }, (_, i) => ({
     timestamp: `2026-10-14T10:30:${String(i).padStart(2, '0')}+07:00`,

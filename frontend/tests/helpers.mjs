@@ -35,7 +35,7 @@ export function harness(fetchImpl = async () => { throw new TypeError('offline')
       querySelectorAll: selector => selector.includes('checkbox') ? ['led', 'fan', 'ac'].map(code => element('switch-' + code)) : [],
       addEventListener: (name, callback) => { if (!events.has(name)) events.set(name, []); events.get(name).push(callback); } },
     window: { location: { pathname: '/dashboard.html', href: '' }, addEventListener() {} },
-    Chart: class { constructor(_, config) { this.data = config.data; } update() {} }
+    Chart: class { constructor(_, config) { this.data = config.data; this.options = config.options; } update() {} }
   });
   const run = code => vm.runInContext(code, context);
   const load = name => run(readFileSync(fileURLToPath(new URL('../js/' + name, import.meta.url)), 'utf8'));

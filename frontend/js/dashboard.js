@@ -67,6 +67,7 @@ function initChart(chartData = []) {
       datasets: [
         {
           label: 'Nhiệt độ (°C)',
+          yAxisID: 'y',
           data: tempData,
           borderColor: '#4318FF',
           backgroundColor: 'rgba(67, 24, 255, 0.05)',
@@ -79,6 +80,7 @@ function initChart(chartData = []) {
         },
         {
           label: 'Độ ẩm (%)',
+          yAxisID: 'y',
           data: humidityData,
           borderColor: '#EE5D50',
           backgroundColor: 'rgba(238, 93, 80, 0.05)',
@@ -91,6 +93,7 @@ function initChart(chartData = []) {
         },
         {
           label: 'Ánh sáng (Lux)',
+          yAxisID: 'yLight',
           data: lightData,
           borderColor: '#FFB547',
           backgroundColor: 'rgba(255, 181, 71, 0.05)',
@@ -138,7 +141,16 @@ function initChart(chartData = []) {
           }
         },
         y: {
-          beginAtZero: true,
+          type: 'linear',
+          position: 'left',
+          beginAtZero: false,
+          grace: '10%',
+          title: {
+            display: true,
+            text: 'Nhiệt độ (°C) / Độ ẩm (%)',
+            color: '#52618a',
+            font: { family: 'Plus Jakarta Sans', size: 11, weight: '600' }
+          },
           grid: {
             color: '#E0E5F2',
             borderDash: [5, 5],
@@ -147,7 +159,29 @@ function initChart(chartData = []) {
           ticks: {
             color: '#A3AED0',
             font: { family: 'Plus Jakarta Sans', size: 11, weight: '600' },
-            stepSize: 100
+            maxTicksLimit: 6,
+            precision: 1
+          }
+        },
+        yLight: {
+          type: 'linear',
+          position: 'right',
+          beginAtZero: false,
+          grace: '10%',
+          title: {
+            display: true,
+            text: 'Ánh sáng (Lux)',
+            color: '#b77900',
+            font: { family: 'Plus Jakarta Sans', size: 11, weight: '600' }
+          },
+          grid: {
+            drawOnChartArea: false
+          },
+          ticks: {
+            color: '#b77900',
+            font: { family: 'Plus Jakarta Sans', size: 11, weight: '600' },
+            maxTicksLimit: 6,
+            precision: 0
           }
         }
       }
