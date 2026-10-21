@@ -6,12 +6,12 @@
 // ===== CẤU HÌNH WIFI & MQTT =====
 const char* ssid = "galaxy";
 const char* password = "10281005";
-const char* mqtt_server = "10.237.204.65";
+const char* mqtt_server = "10.231.110.65";
 
 
 // const char* ssid = "TP-Link_A6B4";
 // const char* password = "25469479";
-// const char* mqtt_server = "192.168.0.103"; // Điền IP laptop dải 192.168.0.x của mình
+// const char* mqtt_server = "192.168.0.102"; // Điền IP laptop dải 192.168.0.x của mình
 
 
 const int mqtt_port = 1883;
@@ -35,6 +35,8 @@ unsigned long lastMsg = 0;
 
 void setup_wifi() {
   delay(10);
+  WiFi.disconnect(); // Xóa thông tin Wi-Fi cũ trong bộ nhớ
+  delay(100);
   Serial.println();
   Serial.print("Dang ket noi WiFi: ");
   Serial.println(ssid);
@@ -148,7 +150,7 @@ void loop() {
     float h = dht.readHumidity();
     float t = dht.readTemperature();
     int lightRaw = analogRead(LIGHT_PIN);
-    int lightVal = map(lightRaw, 0, 1023, 0, 1000);
+    int lightVal = map(lightRaw, 0, 1023, 1000, 0);
 
     if (!isnan(h) && !isnan(t)) {
       StaticJsonDocument<200> doc;

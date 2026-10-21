@@ -213,13 +213,51 @@ for (const result of ['success', 'failed']) {
     assert.deepEqual(body, { device: 'led', action: 'ON' });
     assert.equal(input.checked, false);
     assert.equal(input.disabled, true);
-    assert.match(h.element('status-led').textContent, /chờ ACK/);
+    assert.match(h.element('status-led').textContent, /Đang xử lý/);
+    assert.doesNotMatch(h.element('status-led').textContent, /ACK/);
+    assert.equal(h.toasts.length, 0);
     await h.run('checkPendingCommands()');
     assert.equal(input.checked, result === 'success');
     assert.equal(input.disabled, false);
     assert.equal(h.toasts.at(-1).type, result === 'success' ? 'success' : 'error');
+    assert.equal(h.toasts.length, 1);
+    assert.equal(h.toasts[0].message, result === 'success' ? 'Điều khiển Đèn LED thành công' :
+      'Đèn LED: lệnh không thành công. Vui lòng thử lại.');
+    await h.run('checkPendingCommands()');
+    assert.equal(h.toasts.length, 1);
   });
 }
+
+for (const action of ['ON', 'OFF']) {
+  test('toast thành công ghi đúng hành động từ history sau reload: ' + action, async () => {
+    let complete = false;
+    const h = harness(async url => {
+      if (url.endsWith('/status')) return response([{ device: 'led', status: action }]);
+      return response({ data: [{ command_id: 42, device_name: 'Đèn LED', action_sent: action,
+        command_status: complete ? 'success' : 'pending' }] });
+    });
+    h.load('dashboard.js');
+    h.run('showToast = (message, type, duration) => testToasts.push({ message, type, duration })');
+    await h.run('restorePendingCommands()');
+    await h.run('checkPendingCommands()');
+    assert.equal(h.toasts.length, 0);
+    complete = true;
+    await h.run('checkPendingCommands()');
+    assert.deepEqual({ ...h.toasts[0] }, { message: (action === 'ON' ? 'Đã bật ' : 'Đã tắt ') + 'Đèn LED',
+      type: 'success', duration: 2000 });
+    assert.equal(h.toasts.length, 1);
+    assert.equal(h.element('switch-led').checked, action === 'ON');
+  });
+}
+
+test('toast thành công dùng hành động receipt khi history không có action_sent', async () => {
+  const h = harness(async url => url.endsWith('/status') ? response([{ device: 'led', status: 'OFF' }]) :
+    response({ data: [{ command_id: 42, command_status: 'success' }] }));
+  h.load('dashboard.js');
+  h.run("pendingCommands.set('led', { command_id: 42, action: 'OFF' })");
+  await h.run('checkPendingCommands()');
+  assert.equal(h.toasts[0].message, 'Đã tắt Đèn LED');
+});
 
 test('API control lỗi không mô phỏng bật thiết bị', async () => {
   const h = harness(async url => url.endsWith('/control') ? response(null, 503, 'offline') : response([{ device: 'led', status: 'OFF' }]));
@@ -238,6 +276,8 @@ test('không nhận ACK lệnh khác và không giả failed khi mạng mất', 
   h.context.fetch = async () => { throw new TypeError('offline'); };
   await h.run('checkPendingCommands()');
   assert.equal(h.element('switch-led').disabled, true);
+  assert.match(h.element('status-led').textContent, /Chưa xác minh kết quả/);
+  assert.doesNotMatch(h.element('status-led').textContent, /ACK/);
   assert.equal(h.toasts.length, 0);
 });
 

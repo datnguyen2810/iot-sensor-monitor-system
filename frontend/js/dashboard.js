@@ -41,7 +41,7 @@ function updateDeviceVisual(device, state = confirmedStates[device]) {
   card?.classList.toggle('active-' + device, state === 'ON');
   if (badge) {
     const label = state === 'ON' ? 'Đang bật' : state === 'OFF' ? 'Đã tắt' : 'Chưa xác nhận';
-    badge.textContent = pending ? (pendingCommands.get(device).unverified ? 'Chưa xác minh ACK — ' : 'Đang chờ ACK — ') + label : deviceApiReady ? label : 'Không kết nối — ' + label;
+    badge.textContent = pending ? (pendingCommands.get(device).unverified ? 'Chưa xác minh kết quả — ' : 'Đang xử lý… — ') + label : deviceApiReady ? label : 'Không kết nối — ' + label;
     badge.classList.toggle('on', state === 'ON');
   }
 }
@@ -244,8 +244,14 @@ async function checkPendingCommands() {
       pendingCommands.delete(device);
       // Chỉ GET status xác định trạng thái cuối; không suy ra từ yêu cầu gửi.
       await loadDeviceStatuses();
-      showToast(command.command_status === 'success' ? DEVICE_NAMES[device] + ': đã nhận ACK thành công' :
-        DEVICE_NAMES[device] + ': lệnh thất bại/timeout, xem lịch sử', command.command_status === 'success' ? 'success' : 'error');
+      if (command.command_status === 'success') {
+        const action = command.action_sent || receipt.action;
+        const message = action === 'ON' ? 'Đã bật ' + DEVICE_NAMES[device] :
+          action === 'OFF' ? 'Đã tắt ' + DEVICE_NAMES[device] : 'Điều khiển ' + DEVICE_NAMES[device] + ' thành công';
+        showToast(message, 'success', 2000);
+      } else {
+        showToast(DEVICE_NAMES[device] + ': lệnh không thành công. Vui lòng thử lại.', 'error');
+      }
     } catch (_) {
       receipt.unverified = true;
       // Không giả failed khi mất mạng: giữ khóa/pending và thử lại trong chu kỳ tiếp.
@@ -296,13 +302,12 @@ async function sendDeviceControl(input) {
     });
     if (!receipt?.command_id || receipt.command_status !== 'pending') throw new Error('Phản hồi tiếp nhận lệnh không hợp lệ');
     pendingCommands.set(device, receipt);
-    showToast(DEVICE_NAMES[device] + ': đã gửi lệnh, đang chờ ACK', 'info');
     // Chu kỳ poll tuần tự sẽ xác minh đúng command_id, không chỉ so sánh ON/OFF.
   } catch (error) {
     pendingCommands.delete(device);
     showToast(error.status === 409 ? 'Thiết bị đang có lệnh chờ. Xem lịch sử và thử lại sau.' :
-      error.status === 503 ? 'MQTT chưa sẵn sàng hoặc gửi lệnh thất bại. Kiểm tra broker/lịch sử.' :
-        error.status === 0 ? 'Mất kết nối: chưa xác minh được kết quả gửi, kiểm tra lịch sử trước khi thử lại.' : error.message, 'error');
+      error.status === 503 ? 'Không gửi được lệnh đến thiết bị. Vui lòng kiểm tra kết nối và thử lại.' :
+        error.status === 0 ? 'Mất kết nối, chưa xác minh được kết quả lệnh. Kiểm tra lịch sử trước khi thử lại.' : error.message, 'error');
     await loadDeviceStatuses();
   } finally { updateDeviceVisual(device); }
 }
